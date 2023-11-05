@@ -43,6 +43,29 @@ func TestProcessCSSModules(t *testing.T) {
 }`),
 		},
 		{
+			name: "ValidCSSModules_GlobalKeyword",
+			expectedCSSModules: newExpectedCSSModules(true,
+				[]byte(`.test-class { color: red; font-size: large; }`),
+			),
+			expectedScopedClasses: nil,
+			expectedErr:           "",
+
+			payload: strings.NewReader(`:global {.test-class { color: red; font-size: large; }}`),
+		},
+		{
+			name:                  "ValidCSSModules_MediaQueryScoping",
+			expectedCSSModules:    newExpectedCSSModules(false, nil),
+			expectedScopedClasses: []string{"test-class"},
+			expectedErr:           "",
+
+			payload: strings.NewReader(`@media screen and (min-width: 768px) and (max-width: 1024px) {
+	.test-class {
+		color: green;
+		font-size: large;
+	}
+}`),
+		},
+		{
 			name:                  "InvalidCSSModules_ID#SymbolWillNotBeRead",
 			expectedCSSModules:    newExpectedCSSModules(true, nil),
 			expectedScopedClasses: nil,
@@ -55,11 +78,14 @@ func TestProcessCSSModules(t *testing.T) {
 		tc := testCases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			// TODO: cannot compare the payload with anything
 			css, scopedClasses, err := ProcessCSSModules(tc.payload)
 			if err != nil {
 				if err.Error() != tc.expectedErr {
 					t.Errorf("unexpected error value: expected %q got %q", tc.expectedErr, err.Error())
+				}
+			} else {
+				if tc.expectedErr != "" {
+					t.Errorf("unexpected error value: expected %q got %q", tc.expectedErr, "")
 				}
 			}
 			if tc.expectedCSSModules.canMatch {
@@ -116,6 +142,14 @@ func TestCutSelectorAndPseudo(t *testing.T) {
 			expectedError:               "",
 
 			payload: strings.NewReader(`test-class > :hover`),
+		},
+		{
+			name:                        "ValidPayload_HasNumericCharacter",
+			expectedSelector:            []byte(`test-class-1`),
+			expectedCombinatorAndPseudo: nil,
+			expectedError:               "",
+
+			payload: strings.NewReader(`test-class-1`),
 		},
 		{
 			name:                        "InvalidPayload_NonAlphanumericSymbolsAreNotAllowed",
