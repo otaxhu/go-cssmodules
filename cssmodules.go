@@ -19,7 +19,9 @@ var (
 )
 
 var (
-	validCSSModulesSelectorRegexp = regexp.MustCompile(`^[a-zA-Z][\w-]*$`)
+	validCSSModulesSelectorRegexp = regexp.MustCompile(`^[a-zA-Z][0-9\w-]*$`)
+
+	rightSpacesRegexp = regexp.MustCompile(`[\s]+$`)
 
 	// Matches all of the combinator except for the space which is a special case
 	combinatorSelectorRegexp = regexp.MustCompile(`[+>~]`)
@@ -64,29 +66,24 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 
 	salt := uuid.NewString()
 
-	for {
-		// The check sum is based on the selector and a salt value.
-		checkSumBuffer := getBuffer()
-		defer releaseBuffer(checkSumBuffer)
+	// The check sum is based on the selector and a salt value.
+	checkSumBuffer := getBuffer()
+	defer releaseBuffer(checkSumBuffer)
 
+	for {
 		b, err := bb.ReadByte()
 		if err == io.EOF {
 			if resultingCSS.Len() == 0 {
 				return nil, nil, ErrInvalidCSSModules
 			}
+			cpResultingCSS := make([]byte, resultingCSS.Len(), resultingCSS.Len())
+			copy(cpResultingCSS, resultingCSS.Bytes())
 			return resultingCSS.Bytes(), kvClasses, nil
 		} else if err != nil {
 			return nil, nil, err
 		}
+		// It's a class
 		if b == '.' {
-			firstByteAfterDot, err := bb.ReadByte()
-			if err != nil {
-				return nil, nil, err
-			}
-			if !validCSSModulesSelectorRegexp.Match([]byte{firstByteAfterDot}) {
-				return nil, nil, ErrInvalidCSSModules
-			}
-			bb.UnreadByte()
 			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
 			if indexStartStyles <= 0 {
 				return nil, nil, ErrInvalidCSSModules
@@ -106,8 +103,10 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 
 			checkSumBuffer.Write(selector)
 			checkSumBuffer.WriteString(salt)
-			selectorCheckSum := sha256.Sum256(checkSumBuffer.Bytes())
+			cpCheckSumBuffer := make([]byte, checkSumBuffer.Len(), checkSumBuffer.Len())
+			copy(cpCheckSumBuffer, checkSumBuffer.Bytes())
 			releaseBuffer(checkSumBuffer)
+			selectorCheckSum := sha256.Sum256(cpCheckSumBuffer)
 
 			s := base32.StdEncoding.EncodeToString(selectorCheckSum[:])
 			encodedCheckSum := s[:len(s)/2]
@@ -118,22 +117,58 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 			kvClasses[string(selector)] = encodedCheckSum
 			continue
 		}
-		// if b == ':' {
-		// 	indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
+		// It's a global block
+		if b == ':' {
+			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
+			if indexStartStyles <= 0 {
+				return nil, nil, ErrInvalidCSSModules
+			}
+			keyword := bb.Next(indexStartStyles)
+			keyword = rightSpacesRegexp.ReplaceAll(keyword, []byte{})
+			if !bytes.Equal(keyword, []byte("global")) {
+				return nil, nil, ErrInvalidCSSModules
+			}
+			if _, err := bb.ReadByte(); err != nil {
+				return nil, nil, ErrInvalidCSSModules
+			}
+			braceCount := 1
+			for {
+				byteAfterStartStyles, err := bb.ReadByte()
+				if err == io.EOF {
+					break
+				} else if err != nil {
+					return nil, nil, ErrInvalidCSSModules
+				}
+				resultingCSS.WriteByte(byteAfterStartStyles)
+				if byteAfterStartStyles == '{' {
+					braceCount++
+				} else if byteAfterStartStyles == '}' {
+					braceCount--
+					if braceCount == 0 {
+						resultingCSS.Truncate(resultingCSS.Len() - 1)
+						break
+					}
+				}
+			}
+		}
+		// It's a special declaration, the classes inside of it will be scoped too
+		if b == '@' {
 
-		// }
+		}
 	}
 }
 
 // cutSelectorAndPseudo retrieves the class selector and the pseudo selector,
 // and the combinator if it has one.
-// Also reports whether the class has a pseudo selector through the bool return value,
-// the underlying payload class is guaranteed to be unmodified thanks to the io.Reader
-// interface
-func cutSelectorAndPseudo(class io.Reader) ([]byte, []byte, error) {
+//
+// This function also validates if the selector is a valid css selector.
+//
+// The returned slices are copies of the buffers so you don't have to worry about
+// unexpected behaviour with the buffer pool releasing the buffers
+func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	bb := getBuffer()
 	defer releaseBuffer(bb)
-	if _, err := bb.ReadFrom(class); err != nil {
+	if _, err := bb.ReadFrom(selectorAndPseudo); err != nil {
 		return nil, nil, err
 	}
 	c := bytes.TrimSpace(bb.Bytes())
@@ -145,13 +180,16 @@ func cutSelectorAndPseudo(class io.Reader) ([]byte, []byte, error) {
 		if !validCSSModulesSelectorRegexp.Match(befAltered) {
 			return nil, nil, ErrInvalidCSSModules
 		}
-		return befAltered, nil, nil
+		cpBefAltered := make([]byte, len(befAltered), len(befAltered))
+		copy(cpBefAltered, befAltered)
+		return cpBefAltered, nil, nil
 	}
 
 	combinator := combinatorSelectorRegexp.FindAll(bef, 2)
 
 	// This buffer holds both combinator and colons
 	combinatorBuffer := getBuffer()
+	defer releaseBuffer(combinatorBuffer)
 
 	if combinator == nil {
 		befAltered := bytes.TrimSpace(bef)
@@ -192,6 +230,11 @@ func cutSelectorAndPseudo(class io.Reader) ([]byte, []byte, error) {
 	if !validCSSModulesSelectorRegexp.Match(befAltered) {
 		return nil, nil, ErrInvalidCSSModules
 	}
+	cpBefAltered := make([]byte, len(befAltered), len(befAltered))
+	copy(cpBefAltered, befAltered)
 
-	return befAltered, combinatorBuffer.Bytes(), nil
+	cpCombinatorBuffer := make([]byte, combinatorBuffer.Len(), combinatorBuffer.Len())
+	copy(cpCombinatorBuffer, combinatorBuffer.Bytes())
+
+	return befAltered, cpCombinatorBuffer, nil
 }
