@@ -66,12 +66,38 @@ func TestProcessCSSModules(t *testing.T) {
 }`),
 		},
 		{
+			name: "ValidCSSModules_Comments",
+			expectedCSSModules: newExpectedCSSModules(true,
+				[]byte(`/* Test Comments *//* Not Closing Comment`),
+			),
+			expectedScopedClasses: nil,
+			expectedErr:           "",
+
+			payload: strings.NewReader(`/* Test Comments */ /* Not Closing Comment`),
+		},
+		{
 			name:                  "InvalidCSSModules_ID#SymbolWillNotBeRead",
 			expectedCSSModules:    newExpectedCSSModules(true, nil),
 			expectedScopedClasses: nil,
-			expectedErr:           ErrInvalidCSSModules.Error(),
+			expectedErr:           ErrInvalidInputCSSModules.Error(),
 
 			payload: strings.NewReader(`#test-class {}`),
+		},
+		{
+			name:                  "InvalidCSSModules_GlobalBlockMalformed",
+			expectedCSSModules:    newExpectedCSSModules(true, nil),
+			expectedScopedClasses: nil,
+			expectedErr:           ErrInvalidInputCSSModules.Error(),
+
+			payload: strings.NewReader(`:global {.test-class { color: red; font-size: large; }`),
+		},
+		{
+			name:                  "InvalidCSSModules_NilPayload",
+			expectedCSSModules:    newExpectedCSSModules(true, nil),
+			expectedScopedClasses: nil,
+			expectedErr:           ErrInvalidInputCSSModules.Error(),
+
+			payload: nil,
 		},
 	}
 	for i := range testCases {
@@ -82,21 +108,25 @@ func TestProcessCSSModules(t *testing.T) {
 			if err != nil {
 				if err.Error() != tc.expectedErr {
 					t.Errorf("unexpected error value: expected %q got %q", tc.expectedErr, err.Error())
+					return
 				}
 			} else {
 				if tc.expectedErr != "" {
 					t.Errorf("unexpected error value: expected %q got %q", tc.expectedErr, "")
+					return
 				}
 			}
 			if tc.expectedCSSModules.canMatch {
 				if !bytes.Equal(tc.expectedCSSModules.value, css) {
 					t.Errorf("unexpected css slice of bytes value: expected %q got %q", tc.expectedCSSModules.value, css)
+					return
 				}
 			}
 			for i := range tc.expectedScopedClasses {
 				esc := tc.expectedScopedClasses[i]
 				if _, ok := scopedClasses[esc]; !ok {
 					t.Errorf("unexpected scopedClasses value absence: expected to have %q inside of it, got %q map", esc, scopedClasses)
+					return
 				}
 			}
 		})
@@ -155,7 +185,7 @@ func TestCutSelectorAndPseudo(t *testing.T) {
 			name:                        "InvalidPayload_NonAlphanumericSymbolsAreNotAllowed",
 			expectedSelector:            nil,
 			expectedCombinatorAndPseudo: nil,
-			expectedError:               ErrInvalidCSSModules.Error(),
+			expectedError:               ErrInvalidInputCSSModules.Error(),
 
 			payload: strings.NewReader(`|invalid!class`),
 		},
@@ -168,13 +198,16 @@ func TestCutSelectorAndPseudo(t *testing.T) {
 			if err != nil {
 				if err.Error() != tc.expectedError {
 					t.Errorf("unexpected error value: expected %q got %q", tc.expectedError, err.Error())
+					return
 				}
 			}
 			if !bytes.Equal(selector, tc.expectedSelector) {
 				t.Errorf("unexpected selector value: expected %q got %q", tc.expectedSelector, selector)
+				return
 			}
 			if !bytes.Equal(combinatorAndPseudo, tc.expectedCombinatorAndPseudo) {
 				t.Errorf("unexpected combinatorAndPseudo value: expected %q got %q", tc.expectedCombinatorAndPseudo, combinatorAndPseudo)
+				return
 			}
 		})
 	}

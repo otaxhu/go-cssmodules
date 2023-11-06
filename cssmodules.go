@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ErrInvalidCSSModules = errors.New("go-cssmodules: the input css cannot be converted to css modules")
+	ErrInvalidInputCSSModules = errors.New("go-cssmodules: the input css cannot be converted to css modules")
 
 	ErrUnexpectedError = errors.New("go-cssmodules: appears to happen an unexpected error")
 )
@@ -36,7 +36,9 @@ var bp = sync.Pool{
 }
 
 func getBuffer() *bytes.Buffer {
-	return bp.Get().(*bytes.Buffer)
+	b := bp.Get().(*bytes.Buffer)
+	b.Reset()
+	return b
 }
 
 func releaseBuffer(b *bytes.Buffer) {
@@ -49,6 +51,9 @@ func releaseBuffer(b *bytes.Buffer) {
 // Process the CSS and returns the css processed, the key-value pair of the
 // classes and scoped classes, and an error if there is one
 func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
+	if css == nil {
+		return nil, nil, ErrInvalidInputCSSModules
+	}
 	// Buffer that will contain the css processed and will be returned if there is
 	// no error
 	resultingCSS := getBuffer()
@@ -61,7 +66,7 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 	bb := getBuffer()
 	defer releaseBuffer(bb)
 	if _, err := bb.ReadFrom(css); err != nil {
-		return nil, nil, err
+		return nil, nil, ErrInvalidInputCSSModules
 	}
 
 	salt := uuid.NewString()
@@ -74,23 +79,59 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 		b, err := bb.ReadByte()
 		if err == io.EOF {
 			if resultingCSS.Len() == 0 {
-				return nil, nil, ErrInvalidCSSModules
+				return nil, nil, ErrInvalidInputCSSModules
 			}
 			cpResultingCSS := make([]byte, resultingCSS.Len(), resultingCSS.Len())
-			copy(cpResultingCSS, resultingCSS.Bytes())
-			return resultingCSS.Bytes(), kvClasses, nil
+			if _, err := resultingCSS.Read(cpResultingCSS); err != nil {
+				return nil, nil, ErrUnexpectedError
+			}
+			return cpResultingCSS, kvClasses, nil
 		} else if err != nil {
-			return nil, nil, err
+			return nil, nil, ErrInvalidInputCSSModules
+		}
+		// It's a comment
+		if b == '/' {
+			if starByte, err := bb.ReadByte(); err != nil {
+				return nil, nil, ErrInvalidInputCSSModules
+			} else if starByte != '*' {
+				return nil, nil, ErrInvalidInputCSSModules
+			}
+			resultingCSS.WriteString("/*")
+			for {
+				byteContentComment, err := bb.ReadByte()
+				if err == io.EOF {
+					break
+				} else if err != nil {
+					return nil, nil, ErrInvalidInputCSSModules
+				}
+				resultingCSS.WriteByte(byteContentComment)
+				if byteContentComment == '*' {
+					byteAfterStar, err := bb.ReadByte()
+					if err == io.EOF {
+						break
+					} else if err != nil {
+						return nil, nil, ErrInvalidInputCSSModules
+					}
+					resultingCSS.WriteByte(byteAfterStar)
+					if byteAfterStar == '/' {
+						break
+					}
+				}
+			}
+		}
+		// It's a special declaration, the classes inside of it will be scoped too
+		if b == '@' {
+
 		}
 		// It's a class
 		if b == '.' {
 			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
 			if indexStartStyles <= 0 {
-				return nil, nil, ErrInvalidCSSModules
+				return nil, nil, ErrInvalidInputCSSModules
 			}
 			indexEndStyles := bytes.IndexByte(bb.Bytes(), '}')
 			if indexEndStyles <= indexStartStyles {
-				return nil, nil, ErrInvalidCSSModules
+				return nil, nil, ErrInvalidInputCSSModules
 			}
 			selector := bb.Next(indexStartStyles)
 			selector, combinatorAndPseudo, err := cutSelectorAndPseudo(bytes.NewReader(selector))
@@ -104,8 +145,10 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 			checkSumBuffer.Write(selector)
 			checkSumBuffer.WriteString(salt)
 			cpCheckSumBuffer := make([]byte, checkSumBuffer.Len(), checkSumBuffer.Len())
-			copy(cpCheckSumBuffer, checkSumBuffer.Bytes())
-			releaseBuffer(checkSumBuffer)
+			if _, err := checkSumBuffer.Read(cpCheckSumBuffer); err != nil {
+				return nil, nil, ErrUnexpectedError
+			}
+			checkSumBuffer.Reset()
 			selectorCheckSum := sha256.Sum256(cpCheckSumBuffer)
 
 			s := base32.StdEncoding.EncodeToString(selectorCheckSum[:])
@@ -121,23 +164,21 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 		if b == ':' {
 			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
 			if indexStartStyles <= 0 {
-				return nil, nil, ErrInvalidCSSModules
+				return nil, nil, ErrInvalidInputCSSModules
 			}
 			keyword := bb.Next(indexStartStyles)
 			keyword = rightSpacesRegexp.ReplaceAll(keyword, []byte{})
 			if !bytes.Equal(keyword, []byte("global")) {
-				return nil, nil, ErrInvalidCSSModules
+				return nil, nil, ErrInvalidInputCSSModules
 			}
 			if _, err := bb.ReadByte(); err != nil {
-				return nil, nil, ErrInvalidCSSModules
+				return nil, nil, ErrInvalidInputCSSModules
 			}
 			braceCount := 1
 			for {
 				byteAfterStartStyles, err := bb.ReadByte()
-				if err == io.EOF {
-					break
-				} else if err != nil {
-					return nil, nil, ErrInvalidCSSModules
+				if err != nil {
+					return nil, nil, ErrInvalidInputCSSModules
 				}
 				resultingCSS.WriteByte(byteAfterStartStyles)
 				if byteAfterStartStyles == '{' {
@@ -150,10 +191,6 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 					}
 				}
 			}
-		}
-		// It's a special declaration, the classes inside of it will be scoped too
-		if b == '@' {
-
 		}
 	}
 }
@@ -178,7 +215,7 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	if !hasPseudo {
 		befAltered := bytes.TrimSpace(bef)
 		if !validCSSModulesSelectorRegexp.Match(befAltered) {
-			return nil, nil, ErrInvalidCSSModules
+			return nil, nil, ErrInvalidInputCSSModules
 		}
 		cpBefAltered := make([]byte, len(befAltered), len(befAltered))
 		copy(cpBefAltered, befAltered)
@@ -194,7 +231,7 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	if combinator == nil {
 		befAltered := bytes.TrimSpace(bef)
 		if !validCSSModulesSelectorRegexp.Match(befAltered) {
-			return nil, nil, ErrInvalidCSSModules
+			return nil, nil, ErrInvalidInputCSSModules
 		}
 		if len(bef) != len(befAltered) {
 			combinatorBuffer.WriteByte(' ')
@@ -202,7 +239,7 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	} else if len(combinator) == 1 {
 		combinatorBuffer.Write(combinator[0])
 	} else {
-		return nil, nil, ErrInvalidCSSModules
+		return nil, nil, ErrInvalidInputCSSModules
 	}
 	colons := pseudoColonRegexp.FindAll(aft, -1)
 	if colons == nil {
@@ -210,12 +247,12 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	} else if len(colons) == 1 {
 		combinatorBuffer.WriteString("::")
 	} else {
-		return nil, nil, ErrInvalidCSSModules
+		return nil, nil, ErrInvalidInputCSSModules
 	}
 	aftAltered := pseudoColonRegexp.ReplaceAll(aft, []byte{})
 	aftAltered = bytes.TrimSpace(aftAltered)
 	if !validCSSModulesSelectorRegexp.Match(aftAltered) {
-		return nil, nil, ErrInvalidCSSModules
+		return nil, nil, ErrInvalidInputCSSModules
 	}
 	combinatorBuffer.Write(aftAltered)
 
@@ -228,13 +265,15 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	befAltered := combinatorSelectorRegexp.ReplaceAllLiteral(bef, []byte{})
 	befAltered = bytes.TrimSpace(befAltered)
 	if !validCSSModulesSelectorRegexp.Match(befAltered) {
-		return nil, nil, ErrInvalidCSSModules
+		return nil, nil, ErrInvalidInputCSSModules
 	}
 	cpBefAltered := make([]byte, len(befAltered), len(befAltered))
 	copy(cpBefAltered, befAltered)
 
 	cpCombinatorBuffer := make([]byte, combinatorBuffer.Len(), combinatorBuffer.Len())
-	copy(cpCombinatorBuffer, combinatorBuffer.Bytes())
+	if _, err := combinatorBuffer.Read(cpCombinatorBuffer); err != nil {
+		return nil, nil, ErrUnexpectedError
+	}
 
-	return befAltered, cpCombinatorBuffer, nil
+	return cpBefAltered, cpCombinatorBuffer, nil
 }
