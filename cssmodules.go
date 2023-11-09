@@ -168,6 +168,9 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 						} else if byteAfterMediaQuery == '}' {
 							bracesCount--
 						}
+						if bracesCount == 0 {
+							break
+						}
 					}
 				}
 				if _, err := tmpBuffer.WriteTo(resultingCSS); err != nil {
