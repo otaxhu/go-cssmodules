@@ -7,14 +7,13 @@ import (
 	"testing"
 )
 
-func newExpectedCSSModules(canMatch bool, value []byte) struct {
+type matchableCSS struct {
 	canMatch bool
 	value    []byte
-} {
-	return struct {
-		canMatch bool
-		value    []byte
-	}{
+}
+
+func newMatchableCSS(canMatch bool, value []byte) matchableCSS {
+	return matchableCSS{
 		canMatch: canMatch,
 		value:    value,
 	}
@@ -22,20 +21,17 @@ func newExpectedCSSModules(canMatch bool, value []byte) struct {
 
 func TestProcessCSSModules(t *testing.T) {
 	testCases := []struct {
-		name               string
-		payload            io.Reader
-		expectedCSSModules struct {
-			canMatch bool
-			value    []byte
-		}
+		name                  string
+		payload               io.Reader
+		expectedCSSModules    matchableCSS
 		expectedScopedClasses []string
-		expectedErr           string
+		expectedError         string
 	}{
 		{
 			name:                  "ValidCSSModules",
-			expectedCSSModules:    newExpectedCSSModules(false, nil),
+			expectedCSSModules:    newMatchableCSS(false, nil),
 			expectedScopedClasses: []string{"test-class"},
-			expectedErr:           "",
+			expectedError:         "",
 
 			payload: strings.NewReader(`.test-class {
     color: red;
@@ -44,19 +40,19 @@ func TestProcessCSSModules(t *testing.T) {
 		},
 		{
 			name: "ValidCSSModules_GlobalKeyword",
-			expectedCSSModules: newExpectedCSSModules(true,
+			expectedCSSModules: newMatchableCSS(true,
 				[]byte(`.test-class { color: red; font-size: large; }`),
 			),
 			expectedScopedClasses: nil,
-			expectedErr:           "",
+			expectedError:         "",
 
 			payload: strings.NewReader(`:global {.test-class { color: red; font-size: large; }}`),
 		},
 		{
 			name:                  "ValidCSSModules_MediaQueryScoping",
-			expectedCSSModules:    newExpectedCSSModules(false, nil),
+			expectedCSSModules:    newMatchableCSS(false, nil),
 			expectedScopedClasses: []string{"test-class"},
-			expectedErr:           "",
+			expectedError:         "",
 
 			payload: strings.NewReader(`@media screen and (min-width: 768px) and (max-width: 1024px) {
 	.test-class {
@@ -67,37 +63,53 @@ func TestProcessCSSModules(t *testing.T) {
 		},
 		{
 			name: "ValidCSSModules_Comments",
-			expectedCSSModules: newExpectedCSSModules(true,
-				[]byte(`/* Test Comments *//* Not Closing Comment`),
+			expectedCSSModules: newMatchableCSS(true,
+				[]byte(`/* Test Comments */ /* Not Closing Comment`),
 			),
 			expectedScopedClasses: nil,
-			expectedErr:           "",
+			expectedError:         "",
 
 			payload: strings.NewReader(`/* Test Comments */ /* Not Closing Comment`),
 		},
 		{
-			name:                  "InvalidCSSModules_ID#SymbolWillNotBeRead",
-			expectedCSSModules:    newExpectedCSSModules(true, nil),
+			name:                  "ValidCSSModules_ID#SymbolWillNotBeScoped_AnywaysWillBeWritten",
+			expectedCSSModules:    newMatchableCSS(true, []byte(`#test-class {color: red; font-size: medium}`)),
 			expectedScopedClasses: nil,
-			expectedErr:           ErrInvalidInputCSSModules.Error(),
+			expectedError:         "",
 
-			payload: strings.NewReader(`#test-class {}`),
+			payload: strings.NewReader(`#test-class {color: red; font-size: medium}`),
 		},
 		{
 			name:                  "InvalidCSSModules_GlobalBlockMalformed",
-			expectedCSSModules:    newExpectedCSSModules(true, nil),
+			expectedCSSModules:    newMatchableCSS(true, nil),
 			expectedScopedClasses: nil,
-			expectedErr:           ErrInvalidInputCSSModules.Error(),
+			expectedError:         ErrInvalidInputCSSModules.Error(),
 
 			payload: strings.NewReader(`:global {.test-class { color: red; font-size: large; }`),
 		},
 		{
 			name:                  "InvalidCSSModules_NilPayload",
-			expectedCSSModules:    newExpectedCSSModules(true, nil),
+			expectedCSSModules:    newMatchableCSS(true, nil),
 			expectedScopedClasses: nil,
-			expectedErr:           ErrInvalidInputCSSModules.Error(),
+			expectedError:         ErrInvalidInputCSSModules.Error(),
 
 			payload: nil,
+		},
+		{
+			name:                  "InvalidCSSModules_ClassNameStartsWithSpace",
+			expectedCSSModules:    newMatchableCSS(true, nil),
+			expectedScopedClasses: nil,
+			expectedError:         ErrInvalidInputCSSModules.Error(),
+
+			payload: strings.NewReader(`. test-class { color:red; font-size: large;}`),
+		},
+		{
+			name:                  "InvalidCSSModules_ClassNameStartsWithSpace_HasPseudoAndCombinator",
+			expectedCSSModules:    newMatchableCSS(true, nil),
+			expectedScopedClasses: nil,
+			expectedError:         ErrInvalidInputCSSModules.Error(),
+
+			payload: strings.NewReader(`. test-class :hover { color:green; font-size: medium; }`),
 		},
 	}
 	for i := range testCases {
@@ -106,13 +118,13 @@ func TestProcessCSSModules(t *testing.T) {
 			t.Parallel()
 			css, scopedClasses, err := ProcessCSSModules(tc.payload)
 			if err != nil {
-				if err.Error() != tc.expectedErr {
-					t.Errorf("unexpected error value: expected %q got %q", tc.expectedErr, err.Error())
+				if err.Error() != tc.expectedError {
+					t.Errorf("unexpected error value: expected %q got %q", tc.expectedError, err.Error())
 					return
 				}
 			} else {
-				if tc.expectedErr != "" {
-					t.Errorf("unexpected error value: expected %q got %q", tc.expectedErr, "")
+				if tc.expectedError != "" {
+					t.Errorf("unexpected error value: expected %q got <nil>", tc.expectedError)
 					return
 				}
 			}
@@ -200,6 +212,11 @@ func TestCutSelectorAndPseudo(t *testing.T) {
 					t.Errorf("unexpected error value: expected %q got %q", tc.expectedError, err.Error())
 					return
 				}
+			} else {
+				if tc.expectedError != "" {
+					t.Errorf("unexpected error value: expected %q got <nil>", tc.expectedError)
+					return
+				}
 			}
 			if !bytes.Equal(selector, tc.expectedSelector) {
 				t.Errorf("unexpected selector value: expected %q got %q", tc.expectedSelector, selector)
@@ -208,6 +225,88 @@ func TestCutSelectorAndPseudo(t *testing.T) {
 			if !bytes.Equal(combinatorAndPseudo, tc.expectedCombinatorAndPseudo) {
 				t.Errorf("unexpected combinatorAndPseudo value: expected %q got %q", tc.expectedCombinatorAndPseudo, combinatorAndPseudo)
 				return
+			}
+		})
+	}
+}
+
+func TestScopeCSSClass(t *testing.T) {
+	testCases := []struct {
+		name              string
+		salt              string
+		payload           io.Reader
+		expectedCSS       matchableCSS
+		expectedError     string
+		expectedClassName []byte
+	}{
+		{
+			name:              "ValidCSS",
+			salt:              "",
+			expectedError:     "",
+			expectedCSS:       newMatchableCSS(false, nil),
+			expectedClassName: []byte("test-class"),
+
+			payload: strings.NewReader(`test-class {color: red; font-size: medium;}`),
+		},
+		{
+			name:              "ValidCSS_WithPseudo",
+			salt:              "",
+			expectedError:     "",
+			expectedCSS:       newMatchableCSS(false, nil),
+			expectedClassName: []byte("test-class"),
+
+			payload: strings.NewReader(`test-class:hover {color: red; font-size: medium;}`),
+		},
+		{
+			name:              "ValidCSS_WithPseudo_WithCombinator",
+			salt:              "",
+			expectedError:     "",
+			expectedCSS:       newMatchableCSS(false, nil),
+			expectedClassName: []byte("test-class"),
+
+			payload: strings.NewReader(`test-class :hover {color: red; font-size: medium;}`),
+		},
+		{
+			name:              "InvalidCSS",
+			salt:              "",
+			expectedError:     ErrInvalidInputCSSModules.Error(),
+			expectedCSS:       newMatchableCSS(true, nil),
+			expectedClassName: nil,
+
+			payload: strings.NewReader(`.test-class {}`),
+		},
+	}
+	for i := range testCases {
+		tc := testCases[i]
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cssProcessed, scopedClass, err := scopeCSSClass(tc.payload, tc.salt)
+			if err != nil {
+				if err.Error() != tc.expectedError {
+					t.Errorf("unexpected error value: expected %q got %q", tc.expectedError, err.Error())
+					return
+				}
+			} else {
+				if tc.expectedError != "" {
+					t.Errorf("unexpected error value: expected %q got <nil>", tc.expectedError)
+					return
+				}
+			}
+			if tc.expectedCSS.canMatch {
+				if !bytes.Equal(cssProcessed, tc.expectedCSS.value) {
+					t.Errorf("unexpected cssProcessed value: expected %q got %q", tc.expectedCSS.value, cssProcessed)
+					return
+				}
+			}
+			if scopedClass != nil {
+				if !bytes.Equal([]byte(scopedClass.originalClassName), tc.expectedClassName) {
+					t.Errorf("unexpected class name value: expected %q got %q", tc.expectedClassName, scopedClass.originalClassName)
+					return
+				}
+			} else {
+				if !bytes.Equal(nil, tc.expectedClassName) {
+					t.Errorf("unexpected class name value: expected %q got <nil>", tc.expectedClassName)
+				}
 			}
 		})
 	}
