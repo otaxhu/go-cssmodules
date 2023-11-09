@@ -2,7 +2,6 @@ package cssmodules
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base32"
 	"errors"
 	"io"
@@ -34,6 +33,9 @@ var bp = sync.Pool{
 		return &bytes.Buffer{}
 	},
 }
+
+// It's the base32 encoding but without = signs on the output
+var base32StdEncodingNoPad = base32.StdEncoding.WithPadding(-1)
 
 func getBuffer() *bytes.Buffer {
 	b := bp.Get().(*bytes.Buffer)
@@ -71,10 +73,6 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 
 	salt := uuid.NewString()
 
-	// The check sum is based on the selector and a salt value.
-	checkSumBuffer := getBuffer()
-	defer releaseBuffer(checkSumBuffer)
-
 	for {
 		b, err := bb.ReadByte()
 		if err == io.EOF {
@@ -89,12 +87,12 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 		} else if err != nil {
 			return nil, nil, ErrInvalidInputCSSModules
 		}
-		// It's a comment
 		if b == '/' {
 			if starByte, err := bb.ReadByte(); err != nil {
 				return nil, nil, ErrInvalidInputCSSModules
 			} else if starByte != '*' {
-				return nil, nil, ErrInvalidInputCSSModules
+				resultingCSS.WriteByte(starByte)
+				continue
 			}
 			resultingCSS.WriteString("/*")
 			for {
@@ -118,13 +116,67 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 					}
 				}
 			}
-		}
-		// It's a special declaration, the classes inside of it will be scoped too
-		if b == '@' {
+		} else if b == '@' {
+			indexSpace := bytes.IndexByte(bb.Bytes(), ' ')
+			if indexSpace <= 0 {
+				return nil, nil, ErrInvalidInputCSSModules
+			}
+			specialDeclarationName := bb.Next(indexSpace)
+			indexOpenBracket := bytes.IndexByte(bb.Bytes(), '{')
+			if indexOpenBracket <= 0 {
+				return nil, nil, ErrInvalidInputCSSModules
+			}
+			if bytes.Equal(specialDeclarationName, []byte("media")) {
+				tmpBuffer := getBuffer()
+				defer releaseBuffer(tmpBuffer)
+				tmpBuffer.WriteString("@media")
+				conditions := bb.Next(indexOpenBracket + 1)
+				tmpBuffer.Write(conditions)
+				bracesCount := 1
+				for {
+					byteAfterMediaQuery, err := bb.ReadByte()
+					if err == io.EOF {
+						if bracesCount != 0 {
+							return nil, nil, ErrInvalidInputCSSModules
+						}
+						break
+					} else if err != nil {
+						return nil, nil, ErrInvalidInputCSSModules
+					}
+					if byteAfterMediaQuery == '.' {
+						indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
+						if indexStartStyles <= 0 {
+							return nil, nil, ErrInvalidInputCSSModules
+						}
+						bracesCount++
+						indexEndStyles := bytes.IndexByte(bb.Bytes(), '}')
+						if indexEndStyles <= indexStartStyles {
+							return nil, nil, ErrInvalidInputCSSModules
+						}
+						bracesCount--
+						classRule := bb.Next(indexEndStyles + 1)
+						classRule, scopedClasses, err := scopeCSSClass(bytes.NewReader(classRule), salt)
+						if err != nil {
+							return nil, nil, err
+						}
+						tmpBuffer.Write(classRule)
+						kvClasses[scopedClasses.originalClassName] = scopedClasses.scopedClassName
+					} else {
+						tmpBuffer.WriteByte(byteAfterMediaQuery)
+						if byteAfterMediaQuery == '{' {
+							bracesCount++
+						} else if byteAfterMediaQuery == '}' {
+							bracesCount--
+						}
+					}
+				}
+				if _, err := tmpBuffer.WriteTo(resultingCSS); err != nil {
+					return nil, nil, ErrUnexpectedError
+				}
+			} else {
 
-		}
-		// It's a class
-		if b == '.' {
+			}
+		} else if b == '.' {
 			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
 			if indexStartStyles <= 0 {
 				return nil, nil, ErrInvalidInputCSSModules
@@ -133,64 +185,63 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 			if indexEndStyles <= indexStartStyles {
 				return nil, nil, ErrInvalidInputCSSModules
 			}
-			selector := bb.Next(indexStartStyles)
-			selector, combinatorAndPseudo, err := cutSelectorAndPseudo(bytes.NewReader(selector))
+			cssClassRule := bb.Next(indexEndStyles + 1)
+			cpCssClassRule := make([]byte, len(cssClassRule), len(cssClassRule))
+			copy(cpCssClassRule, cssClassRule)
+			cpCpCssClassRule, scopedClass, err := scopeCSSClass(bytes.NewReader(cpCssClassRule), salt)
 			if err != nil {
 				return nil, nil, err
 			}
-			indexEndStyles = bytes.IndexByte(bb.Bytes(), '}')
-			// The rules of the selector
-			content := bb.Next(indexEndStyles + 1)
-
-			checkSumBuffer.Write(selector)
-			checkSumBuffer.WriteString(salt)
-			cpCheckSumBuffer := make([]byte, checkSumBuffer.Len(), checkSumBuffer.Len())
-			if _, err := checkSumBuffer.Read(cpCheckSumBuffer); err != nil {
-				return nil, nil, ErrUnexpectedError
-			}
-			checkSumBuffer.Reset()
-			selectorCheckSum := sha256.Sum256(cpCheckSumBuffer)
-
-			s := base32.StdEncoding.EncodeToString(selectorCheckSum[:])
-			encodedCheckSum := s[:len(s)/2]
-			resultingCSS.WriteByte(b)
-			resultingCSS.WriteString(encodedCheckSum)
-			resultingCSS.Write(combinatorAndPseudo)
-			resultingCSS.Write(content)
-			kvClasses[string(selector)] = encodedCheckSum
-			continue
-		}
-		// It's a global block
-		if b == ':' {
+			resultingCSS.Write(cpCpCssClassRule)
+			kvClasses[scopedClass.originalClassName] = scopedClass.scopedClassName
+		} else if b == ':' {
 			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
-			if indexStartStyles <= 0 {
+			if indexStartStyles < 0 {
+				resultingCSS.WriteByte(b)
+				continue
+			} else if indexStartStyles == 0 {
 				return nil, nil, ErrInvalidInputCSSModules
 			}
 			keyword := bb.Next(indexStartStyles)
 			keyword = rightSpacesRegexp.ReplaceAll(keyword, []byte{})
+			cpKeyword := make([]byte, len(keyword), len(keyword))
+			copy(cpKeyword, keyword)
 			if !bytes.Equal(keyword, []byte("global")) {
-				return nil, nil, ErrInvalidInputCSSModules
+				resultingCSS.WriteByte(b)
+				resultingCSS.Write(cpKeyword)
+				continue
 			}
 			if _, err := bb.ReadByte(); err != nil {
 				return nil, nil, ErrInvalidInputCSSModules
 			}
+			tmpBuffer := getBuffer()
+			defer releaseBuffer(tmpBuffer)
 			braceCount := 1
 			for {
 				byteAfterStartStyles, err := bb.ReadByte()
 				if err != nil {
 					return nil, nil, ErrInvalidInputCSSModules
 				}
-				resultingCSS.WriteByte(byteAfterStartStyles)
+				tmpBuffer.WriteByte(byteAfterStartStyles)
 				if byteAfterStartStyles == '{' {
 					braceCount++
 				} else if byteAfterStartStyles == '}' {
 					braceCount--
 					if braceCount == 0 {
-						resultingCSS.Truncate(resultingCSS.Len() - 1)
+						tmpBuffer.Truncate(tmpBuffer.Len() - 1)
 						break
 					}
 				}
 			}
+			cpTmpBuffer := make([]byte, tmpBuffer.Len(), tmpBuffer.Len())
+			if _, err := tmpBuffer.Read(cpTmpBuffer); err != nil {
+				return nil, nil, ErrInvalidInputCSSModules
+			}
+			releaseBuffer(tmpBuffer)
+			cpTmpBuffer = bytes.TrimSpace(cpTmpBuffer)
+			resultingCSS.Write(cpTmpBuffer)
+		} else {
+			resultingCSS.WriteByte(b)
 		}
 	}
 }
@@ -208,12 +259,12 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	if _, err := bb.ReadFrom(selectorAndPseudo); err != nil {
 		return nil, nil, err
 	}
-	c := bytes.TrimSpace(bb.Bytes())
+	c := rightSpacesRegexp.ReplaceAll(bb.Bytes(), []byte{})
 
 	bef, aft, hasPseudo := bytes.Cut(c, []byte{':'})
 
 	if !hasPseudo {
-		befAltered := bytes.TrimSpace(bef)
+		befAltered := rightSpacesRegexp.ReplaceAll(bef, []byte{})
 		if !validCSSModulesSelectorRegexp.Match(befAltered) {
 			return nil, nil, ErrInvalidInputCSSModules
 		}
@@ -263,7 +314,7 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	//
 	//////////////////
 	befAltered := combinatorSelectorRegexp.ReplaceAllLiteral(bef, []byte{})
-	befAltered = bytes.TrimSpace(befAltered)
+	befAltered = rightSpacesRegexp.ReplaceAll(befAltered, []byte{})
 	if !validCSSModulesSelectorRegexp.Match(befAltered) {
 		return nil, nil, ErrInvalidInputCSSModules
 	}
@@ -276,4 +327,83 @@ func cutSelectorAndPseudo(selectorAndPseudo io.Reader) ([]byte, []byte, error) {
 	}
 
 	return cpBefAltered, cpCombinatorBuffer, nil
+}
+
+// scopeCSSClass receives a css class and process it and then returns the processed css blob and
+// the class name
+//
+// The css param must be only one class.
+//
+// (IMPORTANT): the class must not start with a dot . otherwise it will return a error
+func scopeCSSClass(css io.Reader, salt string) ([]byte, *struct {
+	originalClassName string
+	scopedClassName   string
+}, error) {
+	if css == nil {
+		return nil, nil, ErrInvalidInputCSSModules
+	}
+
+	bb := getBuffer()
+	defer releaseBuffer(bb)
+
+	if _, err := bb.ReadFrom(css); err != nil {
+		return nil, nil, ErrInvalidInputCSSModules
+	}
+
+	resultingCSS := getBuffer()
+	defer releaseBuffer(resultingCSS)
+
+	indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
+	if indexStartStyles <= 0 {
+		return nil, nil, ErrInvalidInputCSSModules
+	}
+
+	selector := bb.Next(indexStartStyles)
+	selector, pseudo, err := cutSelectorAndPseudo(bytes.NewReader(selector))
+	if err != nil {
+		return nil, nil, err
+	}
+	restClass := make([]byte, bb.Len(), bb.Len())
+	if _, err := bb.Read(restClass); err != nil {
+		return nil, nil, ErrUnexpectedError
+	}
+	tmpBuffer := getBuffer()
+	defer releaseBuffer(tmpBuffer)
+	tmpBuffer.Write(selector)
+	tmpBuffer.WriteString(salt)
+
+	encodedClassName := base32StdEncodingNoPad.EncodeToString(tmpBuffer.Bytes())
+
+	tmpBuffer.Reset()
+
+	// This is the construction of the scoped class name
+	tmpBuffer.WriteByte('_')
+	tmpBuffer.Write(selector)
+	tmpBuffer.WriteByte('_')
+	tmpBuffer.WriteString(encodedClassName)
+
+	cpTmpBuffer := make([]byte, tmpBuffer.Len(), tmpBuffer.Len())
+	copy(cpTmpBuffer, tmpBuffer.Bytes())
+
+	resultingCSS.WriteByte('.')
+	if _, err := resultingCSS.ReadFrom(tmpBuffer); err != nil {
+		return nil, nil, ErrUnexpectedError
+	}
+	resultingCSS.Write(pseudo)
+	resultingCSS.WriteByte(' ')
+	resultingCSS.Write(restClass)
+
+	cpResultingCSS := make([]byte, resultingCSS.Len(), resultingCSS.Len())
+	if _, err := resultingCSS.Read(cpResultingCSS); err != nil {
+		return nil, nil, ErrUnexpectedError
+	}
+	classNameScoped := &struct {
+		originalClassName string
+		scopedClassName   string
+	}{
+		originalClassName: string(selector),
+		scopedClassName:   string(cpTmpBuffer),
+	}
+
+	return cpResultingCSS, classNameScoped, nil
 }
