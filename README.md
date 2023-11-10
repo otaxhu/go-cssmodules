@@ -1,7 +1,17 @@
 # CSS Modules in Go
 With this library you can parse any CSS that you have and get some key-value pairs with your classes and the scoped classes
 
+- #### Features:
+[x] Class scoping per function call
 
+[x] Global scoping trought the `:global` keyword
+
+[x] Media query scoping support
+
+[ ] Another `@` (at) declarations support:
+`@import`, `@font-face`, `@keyframes`, etc.
+
+[x] Your ID (`#`), element (`div`, `span`, etc.) and universal (`*`) selectors are global scoped whether they are outside or not of a `:global` block
 
 - #### Installation:
 1. Create a new directory and initialize a go project with the following commands:
