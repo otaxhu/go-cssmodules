@@ -47,6 +47,7 @@ func releaseBuffer(b *bytes.Buffer) {
 	if b != nil {
 		b.Reset()
 		bp.Put(b)
+		b = nil
 	}
 }
 
@@ -135,12 +136,7 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 				bracesCount := 1
 				for {
 					byteAfterMediaQuery, err := bb.ReadByte()
-					if err == io.EOF {
-						if bracesCount != 0 {
-							return nil, nil, ErrInvalidInputCSSModules
-						}
-						break
-					} else if err != nil {
+					if err != nil {
 						return nil, nil, ErrInvalidInputCSSModules
 					}
 					if byteAfterMediaQuery == '.' {
@@ -167,9 +163,9 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 							bracesCount++
 						} else if byteAfterMediaQuery == '}' {
 							bracesCount--
-						}
-						if bracesCount == 0 {
-							break
+							if bracesCount == 0 {
+								break
+							}
 						}
 					}
 				}
@@ -240,7 +236,6 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 			if _, err := tmpBuffer.Read(cpTmpBuffer); err != nil {
 				return nil, nil, ErrInvalidInputCSSModules
 			}
-			releaseBuffer(tmpBuffer)
 			cpTmpBuffer = bytes.TrimSpace(cpTmpBuffer)
 			resultingCSS.Write(cpTmpBuffer)
 		} else {
@@ -362,7 +357,9 @@ func scopeCSSClass(css io.Reader, salt string) ([]byte, *struct {
 	}
 
 	selector := bb.Next(indexStartStyles)
-	selector, pseudo, err := cutSelectorAndPseudo(bytes.NewReader(selector))
+	cpSelector := make([]byte, len(selector), len(selector))
+	copy(cpSelector, selector)
+	selector, pseudo, err := cutSelectorAndPseudo(bytes.NewReader(cpSelector))
 	if err != nil {
 		return nil, nil, err
 	}
