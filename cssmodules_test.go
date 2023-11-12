@@ -80,6 +80,58 @@ func TestProcessCSSModules(t *testing.T) {
 			payload: strings.NewReader(`#test-class {color: red; font-size: medium}`),
 		},
 		{
+			name: "ValidCSSModules_Another@declarationsSupport",
+			expectedCSSModules: newMatchableCSS(true, []byte(`@import url("path/to/styles.css");
+@keyframes myAnimation {
+	from {
+		background-color: red;
+	}
+	to {
+		background-color: blue;
+	}
+}
+@keyframes anotherAnimation {
+	0% {
+		background-color: green;
+	}
+	10% {
+		background-color: red;
+	}
+	90% {
+		background-color: black;
+	}
+	100% {
+		background-color: purple;
+	}
+}`)),
+			expectedScopedClasses: nil,
+			expectedError:         "",
+
+			payload: strings.NewReader(`@import url("path/to/styles.css");
+@keyframes myAnimation {
+	from {
+		background-color: red;
+	}
+	to {
+		background-color: blue;
+	}
+}
+@keyframes anotherAnimation {
+	0% {
+		background-color: green;
+	}
+	10% {
+		background-color: red;
+	}
+	90% {
+		background-color: black;
+	}
+	100% {
+		background-color: purple;
+	}
+}`),
+		},
+		{
 			name:                  "InvalidCSSModules_GlobalBlockMalformed",
 			expectedCSSModules:    newMatchableCSS(true, nil),
 			expectedScopedClasses: nil,
@@ -130,7 +182,7 @@ func TestProcessCSSModules(t *testing.T) {
 			}
 			if tc.expectedCSSModules.canMatch {
 				if !bytes.Equal(tc.expectedCSSModules.value, css) {
-					t.Errorf("unexpected css slice of bytes value: expected %q got %q", tc.expectedCSSModules.value, css)
+					t.Errorf("unexpected css slice of bytes value: expected\n%q\ngot\n%q", tc.expectedCSSModules.value, css)
 					return
 				}
 			}
