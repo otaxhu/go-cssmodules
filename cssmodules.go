@@ -117,6 +117,23 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 					}
 				}
 			}
+		} else if b == '"' || b == '\'' {
+			resultingCSS.WriteByte(b)
+			for {
+				indexEndString := bytes.IndexByte(bb.Bytes(), b)
+				if indexEndString < 0 {
+					return nil, nil, ErrInvalidInputCSSModules
+				}
+
+				if bb.Bytes()[indexEndString-1] == '\\' {
+					resultingCSS.WriteByte('\\')
+					resultingCSS.WriteByte(b)
+					continue
+				}
+				contentString := bb.Next(indexEndString + 1)
+				resultingCSS.Write(contentString)
+				break
+			}
 		} else if b == '@' {
 			indexSpace := bytes.IndexByte(bb.Bytes(), ' ')
 			if indexSpace <= 0 {
@@ -173,7 +190,8 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 					return nil, nil, ErrUnexpectedError
 				}
 			} else {
-
+				resultingCSS.WriteByte(b)
+				resultingCSS.Write(specialDeclarationName)
 			}
 		} else if b == '.' {
 			indexStartStyles := bytes.IndexByte(bb.Bytes(), '{')
@@ -202,12 +220,12 @@ func ProcessCSSModules(css io.Reader) ([]byte, map[string]string, error) {
 				return nil, nil, ErrInvalidInputCSSModules
 			}
 			keyword := bb.Next(indexStartStyles)
-			keyword = rightSpacesRegexp.ReplaceAll(keyword, []byte{})
-			cpKeyword := make([]byte, len(keyword), len(keyword))
-			copy(cpKeyword, keyword)
-			if !bytes.Equal(keyword, []byte("global")) {
+			alteredKeyword := rightSpacesRegexp.ReplaceAll(keyword, []byte{})
+			cpKeyword := make([]byte, len(alteredKeyword), len(alteredKeyword))
+			copy(cpKeyword, alteredKeyword)
+			if !bytes.Equal(alteredKeyword, []byte("global")) {
 				resultingCSS.WriteByte(b)
-				resultingCSS.Write(cpKeyword)
+				resultingCSS.Write(keyword)
 				continue
 			}
 			if _, err := bb.ReadByte(); err != nil {
