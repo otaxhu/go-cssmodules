@@ -10,7 +10,36 @@ With this library you can parse any CSS that you have and get some key-value pai
 - [x] Your ID (`#`), element (`div`, `span`, etc.) and universal (`*`) selectors are global scoped whether they are outside or not of a `:global` block
 - [ ] Scoping of animations (`@keyframes` declarations)
 
-- #### Installation:
+## CSS Modules in HTML templates:
+Also you can use the `ProcessHTMLWithCSSModules` function for processing HTML tags that has a `css-module` attribute.
+
+Little example of a template with CSS Modules:
+
+```html
+<div css-module="class-foo">
+    <p css-module="class-foo class-bar">Lorem ipsum</p>
+</div>
+```
+
+Pass it with this `map[string]string` or `json`-like object with values of strings to the `ProcessHTMLWithCSSModules` function:
+```json
+// To obtain this object you have to first
+// generate it with the function ProcessCSSModules
+{
+    "class-foo": "_class-foo_RANIDFOOBARPIZZA",
+    "class-bar": "_class-bar_RANIDBARFOOAREPA"
+}
+```
+
+Your template will become something like this after processed:
+
+```html
+<div class="_class-foo_RANIDFOOBARPIZZA">
+    <p class="_class-foo_RANIDFOOBARPIZZA _class-bar_RANIDBARFOOAREPA">Lorem ipsum</p>
+</div>
+```
+
+### Installation:
 1. Create a new directory and initialize a go project with the following commands:
 ```sh
 $ mkdir my-directory
