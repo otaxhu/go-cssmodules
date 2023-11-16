@@ -117,16 +117,17 @@ mainLoop:
 					w.WriteString(`">`)
 					continue mainLoop
 				}
+				w.WriteString(` class="`)
 				if hasClassAttr {
-					w.WriteString(` class="`)
 					w.WriteString(html_parser.EscapeString(string(bytes.TrimSpace(classVal))))
+					w.WriteByte(' ')
 				}
 				break
 			}
 		}
 
 		classes := bytes.Split(cssModulesVal, []byte{' '})
-		for _, c := range classes {
+		for i, c := range classes {
 			// If equals empty then ignore the consumer's HTML syntax error and continue
 			if bytes.Equal(c, nil) {
 				continue
@@ -135,7 +136,9 @@ mainLoop:
 			if !exists {
 				return ErrClassNotFound
 			}
-			w.WriteByte(' ')
+			if i != 0 {
+				w.WriteByte(' ')
+			}
 			w.WriteString(class)
 		}
 		w.WriteString(`">`)
