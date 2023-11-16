@@ -205,7 +205,7 @@ func TestProcessCSSModules(t *testing.T) {
 	}
 }
 
-func TestCSSModulesParser_Parse(t *testing.T) {
+func TestCSSModulesParser_ParseTo(t *testing.T) {
 	for i := range testCasesCSSModules {
 		tc := testCasesCSSModules[i]
 		t.Run(tc.name, func(t *testing.T) {
