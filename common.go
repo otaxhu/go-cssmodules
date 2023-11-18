@@ -2,7 +2,7 @@ package cssmodules
 
 import (
 	"bytes"
-	"encoding/base32"
+	"hash/adler32"
 	"io"
 	"sync"
 )
@@ -13,8 +13,7 @@ type writer interface {
 	io.StringWriter
 }
 
-// It's the base32 encoding but without = signs on the output
-var base32StdEncodingNoPad = base32.StdEncoding.WithPadding(-1)
+var adlerHashFunction = adler32.New()
 
 // Buffer pool
 var bp = sync.Pool{
