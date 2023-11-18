@@ -39,8 +39,7 @@ font-size: large;
 	{
 		name: "ValidCSSModules_GlobalKeyword",
 		expectedCSSModules: newMatchableCSS(true,
-			[]byte(` .test-class { color: red; font-size: large; }
-`),
+			[]byte(` .test-class { color: red; font-size: large; }`),
 		),
 		expectedScopedClasses: nil,
 		expectedError:         "",
@@ -54,18 +53,16 @@ font-size: large;
 		expectedError:         "",
 
 		payload: `@media screen and (min-width: 768px) and (max-width: 1024px) {
-.test-class {
-	color: green;
-	font-size: large;
-}
-}
-`,
+	.test-class {
+		color: green;
+		font-size: large;
+	}
+}`,
 	},
 	{
 		name: "ValidCSSModules_Comments",
 		expectedCSSModules: newMatchableCSS(true,
-			[]byte(`/* Test Comments */ /* Not Closing Comment
-`),
+			[]byte(`/* Test Comments */ /* Not Closing Comment`),
 		),
 		expectedScopedClasses: nil,
 		expectedError:         "",
@@ -74,8 +71,9 @@ font-size: large;
 	},
 	{
 		name: "ValidCSSModules_ID#SymbolWillNotBeScoped_AnywaysWillBeWritten",
-		expectedCSSModules: newMatchableCSS(true, []byte(`#test-class {color: red; font-size: medium}
-`)),
+		expectedCSSModules: newMatchableCSS(true,
+			[]byte(`#test-class {color: red; font-size: medium}`),
+		),
 		expectedScopedClasses: nil,
 		expectedError:         "",
 
@@ -85,59 +83,63 @@ font-size: large;
 		name: "ValidCSSModules_Another@declarationsSupport",
 		expectedCSSModules: newMatchableCSS(true, []byte(`@import url("path/to/styles.css");
 @keyframes myAnimation {
-from {
-	background-color: red;
-}
-to {
-	background-color: blue;
-}
+	from {
+		background-color: red;
+	}
+	to {
+		background-color: blue;
+	}
 }
 @keyframes anotherAnimation {
-0% {
-	background-color: green;
-}
-10% {
-	background-color: red;
-}
-90% {
-	background-color: black;
-}
-100% {
-	background-color: purple;
-}
-}
-`)),
+	0% {
+		background-color: green;
+	}
+	10% {
+		background-color: red;
+	}
+	90% {
+		background-color: black;
+	}
+	100% {
+		background-color: purple;
+	}
+}`)),
 		expectedScopedClasses: nil,
 		expectedError:         "",
 
 		payload: `@import url("path/to/styles.css");
 @keyframes myAnimation {
-from {
-	background-color: red;
-}
-to {
-	background-color: blue;
-}
+	from {
+		background-color: red;
+	}
+	to {
+		background-color: blue;
+	}
 }
 @keyframes anotherAnimation {
-0% {
-	background-color: green;
-}
-10% {
-	background-color: red;
-}
-90% {
-	background-color: black;
-}
-100% {
-	background-color: purple;
-}
+	0% {
+		background-color: green;
+	}
+	10% {
+		background-color: red;
+	}
+	90% {
+		background-color: black;
+	}
+	100% {
+		background-color: purple;
+	}
 }`,
 	},
+	// Invalid css syntax will not return an error
 	{
+		// According to the css syntax standard, a syntax error should not be considered as a
+		// Fatal error, the only problem would be unexpected behaviour if you do not delimit
+		// well your global block with {}
 		name: "InvalidCSSModules_GlobalBlockMalformed",
-		expectedCSSModules: newMatchableCSS(true, []byte(` .test-class { color: red; font-size: large; }
-`)),
+		expectedCSSModules: newMatchableCSS(true,
+			[]byte(` .test-class { color: red; font-size: large; }`),
+		),
 		expectedScopedClasses: nil,
 		expectedError:         "",
 
@@ -145,7 +147,7 @@ to {
 	},
 	{
 		name:                  "InvalidCSSModules_NilPayload",
-		expectedCSSModules:    newMatchableCSS(true, []byte("\n")),
+		expectedCSSModules:    newMatchableCSS(true, nil),
 		expectedScopedClasses: nil,
 		expectedError:         "",
 
@@ -153,17 +155,17 @@ to {
 	},
 	{
 		name: "InvalidCSSModules_ClassNameStartsWithSpace",
-		expectedCSSModules: newMatchableCSS(true, []byte(`. test-class { color:red; font-size: large;}
-`)),
+		expectedCSSModules: newMatchableCSS(true,
+			[]byte(`. test-class { color:red; font-size: large;}`),
+		),
 		expectedScopedClasses: nil,
 		expectedError:         "",
 
 		payload: `. test-class { color:red; font-size: large;}`,
 	},
 	{
-		name: "InvalidCSSModules_ClassNameStartsWithSpace_HasPseudoAndCombinator",
-		expectedCSSModules: newMatchableCSS(true, []byte(`. test-class :hover { color:green; font-size: medium; }
-`)),
+		name:                  "InvalidCSSModules_ClassNameStartsWithSpace_HasPseudoAndCombinator",
+		expectedCSSModules:    newMatchableCSS(true, []byte(`. test-class :hover { color:green; font-size: medium; }`)),
 		expectedScopedClasses: nil,
 		expectedError:         "",
 
