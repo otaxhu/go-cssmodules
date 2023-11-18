@@ -1,10 +1,12 @@
 package cssmodules
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"io"
+	"sync"
 
-	"github.com/google/uuid"
 	"github.com/tdewolff/parse/v2"
 	css_parser "github.com/tdewolff/parse/v2/css"
 )
@@ -60,7 +62,12 @@ func processCSSModules(r io.Reader, w writer) (map[string]string, error) {
 	zz := css_parser.NewLexer(parse.NewInput(r))
 	scopedClasses := map[string]string{}
 
-	salt := uuid.NewString()
+	mutex := &sync.Mutex{}
+
+	salt := make([]byte, 4)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
 	dataTempBuffer := getBuffer()
 	defer releaseBuffer(dataTempBuffer)
 mainLoop:
@@ -68,7 +75,6 @@ mainLoop:
 		zt, data := zz.Next()
 		if zt == css_parser.ErrorToken {
 			if err := zz.Err(); err == io.EOF {
-				w.WriteByte('\n')
 				return scopedClasses, nil
 			} else if err != nil {
 				return nil, err
@@ -115,7 +121,6 @@ mainLoop:
 					w.Write(data)
 				}
 			}
-			continue mainLoop
 		} else if zt == css_parser.AtKeywordToken {
 			if _, err := dataTempBuffer.WriteTo(w); err != nil {
 				return nil, err
@@ -125,7 +130,10 @@ mainLoop:
 				continue mainLoop
 			}
 			w.Write(data)
-			if zt != css_parser.IdentToken && string(data) != "media" {
+			if zt != css_parser.IdentToken {
+				continue mainLoop
+			}
+			if string(data) != "media" {
 				continue mainLoop
 			}
 			for {
@@ -146,19 +154,7 @@ mainLoop:
 						w.Write(data)
 						continue
 					}
-					dataTempBuffer.WriteString(salt)
-					dataTempBuffer.Write(data)
-					checksum := sha256.Sum256(dataTempBuffer.Bytes())
-					encodedChecksum := base32StdEncodingNoPad.EncodeToString(checksum[:])
-					dataTempBuffer.Reset()
-					dataTempBuffer.WriteByte('_')
-					dataTempBuffer.Write(data)
-					dataTempBuffer.WriteByte('_')
-					dataTempBuffer.WriteString(encodedChecksum)
-					scopedClasses[string(data)] = dataTempBuffer.String()
-					if _, err := dataTempBuffer.WriteTo(w); err != nil {
-						return nil, err
-					}
+					scopeCSSClass(data, salt, w, scopedClasses, mutex)
 				} else if zt == css_parser.LeftBraceToken {
 					braceCount++
 				} else if zt == css_parser.RightBraceToken {
@@ -180,19 +176,7 @@ mainLoop:
 				w.Write(data)
 				continue mainLoop
 			}
-			dataTempBuffer.WriteString(salt)
-			dataTempBuffer.Write(data)
-			checksum := sha256.Sum256(dataTempBuffer.Bytes())
-			encodedChecksum := base32StdEncodingNoPad.EncodeToString(checksum[:])
-			dataTempBuffer.Reset()
-			dataTempBuffer.WriteByte('_')
-			dataTempBuffer.Write(data)
-			dataTempBuffer.WriteByte('_')
-			dataTempBuffer.WriteString(encodedChecksum)
-			scopedClasses[string(data)] = dataTempBuffer.String()
-			if _, err := dataTempBuffer.WriteTo(w); err != nil {
-				return nil, err
-			}
+			scopeCSSClass(data, salt, w, scopedClasses, mutex)
 		} else {
 			if _, err := dataTempBuffer.WriteTo(w); err != nil {
 				return nil, err
@@ -200,4 +184,31 @@ mainLoop:
 		}
 		dataTempBuffer.Reset()
 	}
+}
+
+func scopeCSSClass(data []byte, salt []byte, w writer, scopedClasses map[string]string, mutex *sync.Mutex) {
+	defer adlerHashFunction.Reset()
+	defer mutex.Unlock()
+	mutex.Lock()
+	adlerHashFunction.Write(data)
+	adlerHashFunction.Write(salt)
+
+	checksum := adlerHashFunction.Sum32()
+
+	bufChecksumUint32 := make([]byte, 4)
+	binary.NativeEndian.PutUint32(bufChecksumUint32, checksum)
+
+	encodedChecksum := base64.RawURLEncoding.EncodeToString(bufChecksumUint32)
+
+	tempBuffer := getBuffer()
+	defer releaseBuffer(tempBuffer)
+
+	tempBuffer.WriteByte('_')
+	tempBuffer.Write(data)
+	tempBuffer.WriteByte('_')
+	tempBuffer.WriteString(encodedChecksum)
+
+	tempBuffer.WriteTo(w)
+
+	scopedClasses[string(data)] = encodedChecksum
 }
