@@ -208,7 +208,10 @@ func scopeCSSClass(data []byte, salt []byte, w writer, scopedClasses map[string]
 	tempBuffer.WriteByte('_')
 	tempBuffer.WriteString(encodedChecksum)
 
+	bufScopedClassName := make([]byte, tempBuffer.Len())
+	copy(bufScopedClassName, tempBuffer.Bytes())
+
 	tempBuffer.WriteTo(w)
 
-	scopedClasses[string(data)] = encodedChecksum
+	scopedClasses[string(data)] = string(bufScopedClassName)
 }
